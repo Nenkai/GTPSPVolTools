@@ -7,12 +7,16 @@ using System.Threading.Tasks;
 using System.IO;
 using Syroot.BinaryData.Memory;
 
+using PDTools.Utils;
+
 namespace GTPSPUnpacker
 {
     public class Volume
     {
         private const int MainHeaderBlockSize = 1;
         public const int BlockSize = 0x800;
+
+        public const int VolumeMagic = 0x71D319F3;
 
         public long Date { get; set; }
         public int ToCBlockOffset { get; set; }
@@ -25,6 +29,8 @@ namespace GTPSPUnpacker
 
         public List<ushort> FolderOffsets { get; set; }
 
+        private List<VolumeEntry> _files { get; set; } = new();
+
         private string _fileName;
         private FileStream _fs;
 
@@ -33,7 +39,7 @@ namespace GTPSPUnpacker
             _fileName = fileName;
         }
 
-        public void Init()
+        public bool Init()
         {
             _fs = File.Open(_fileName, FileMode.Open);
 
@@ -50,7 +56,14 @@ namespace GTPSPUnpacker
             Volume.Decrypt(buf[0x20..], buf[0x20..], sizeof(uint));
 
             SpanReader sr = new SpanReader(buf);
-            int unk1 = sr.ReadInt32();
+            int Magic = sr.ReadInt32();
+
+            if (Magic != VolumeMagic)
+            {
+                Console.WriteLine("Volume: Magic did not match. Not a volume file.");
+                return false;
+            }
+
             Date = sr.ReadInt64();
             int unk3 = sr.ReadInt32();
             ToCBlockOffset = sr.ReadInt32();
@@ -62,6 +75,8 @@ namespace GTPSPUnpacker
             ToCActualOffset = (MainHeaderBlockSize + ToCBlockOffset) * BlockSize;
             _fs.Position = ToCActualOffset;
 
+            //Console.WriteLine($"Volume: Created - {Date}");
+            Console.WriteLine($"Volume: {FolderCount} Total Folders");
 #if DEBUG
             File.WriteAllBytes("main_header.bin", buf.ToArray());
 
@@ -70,22 +85,24 @@ namespace GTPSPUnpacker
             Volume.Decrypt(tocBuf, tocBuf, ToCLength);
             File.WriteAllBytes("toc.bin", tocBuf.ToArray());
 
-            _fs.Position = ToCActualOffset;
-            Span<byte> folderCountBuf = new byte[(FolderCount * sizeof(ushort)) + 2];
-            _fs.Read(folderCountBuf);
-            Volume.Decrypt(folderCountBuf, folderCountBuf, (FolderCount * sizeof(ushort)) + 2);
-            File.WriteAllBytes("folderHeader.bin", folderCountBuf.ToArray());
-
             _fs.Position = 0;
             Span<byte> wholeThing = new byte[ToCActualOffset + ToCLength];
             _fs.Read(wholeThing);
             Volume.Decrypt(wholeThing, wholeThing, (int)(ToCActualOffset + ToCLength));
             File.WriteAllBytes("whole_thing.bin", wholeThing.ToArray());
 #endif
+
+            _fs.Position = ToCActualOffset;
+            Span<byte> folderCountBuf = new byte[(FolderCount * sizeof(ushort)) + 2];
+            _fs.Read(folderCountBuf);
+            Volume.Decrypt(folderCountBuf, folderCountBuf, folderCountBuf.Length);
+
             SpanReader folderBufReader = new SpanReader(folderCountBuf);
             FolderOffsets = new List<ushort>(FolderCount + 1);
             for (int i = 0; i < FolderCount + 1; i++)
                 FolderOffsets.Add(folderBufReader.ReadUInt16());
+
+            return true;
         }
 
         /// <summary>
@@ -287,11 +304,151 @@ namespace GTPSPUnpacker
             return advancedPtr.Slice(len);
         }
 
-        private void GetAll()
+        public void UnpackAll(string outputDir)
         {
+            _fs.Position = ToCActualOffset;
 
+            Span<byte> toc = new byte[ToCLength];
+            _fs.Read(toc);
+            Volume.Decrypt(toc, toc, toc.Length);
+
+            BitStream bs = new BitStream(BitStreamMode.Read, toc, BitStreamSignificantBitOrder.MSB);
+
+            bs.Position = FolderOffsets[0] * 0x40;
+
+            var root = new VolumeEntry();
+            RegisterFolder(ref bs, root, "");
+
+            Directory.CreateDirectory(outputDir);
+
+            using (var sw = new StreamWriter(Path.Combine(outputDir, "files.txt"))) 
+            {
+                sw.WriteLine("Generated with GTPSPUnpacker by Nenkai#9075");
+                sw.WriteLine($"Files: {_files.Count}");
+                sw.WriteLine();
+
+                foreach (var file in _files)
+                    sw.WriteLine(file);
+            }
+
+            Console.WriteLine($"Starting to extract {_files.Count} files.");
+            Console.WriteLine();
+
+            for (int i = 0; i < _files.Count; i++)
+            {
+                VolumeEntry file = _files[i];
+                if ((i % 10) == 0 || i >= _files.Count - 10)
+                {
+                    int percent = (int)((double)i / _files.Count * 100);
+                    Console.Write($"\r[{percent}%] Unpacking {file.FullPath}...                         ");
+                }
+
+                UnpackFile(outputDir, file);
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("Done unpacking.");
         }
 
+        private void RegisterFolder(ref BitStream bs, VolumeEntry parent, string parentPath)
+        {
+            int basePos = bs.Position;
+            
+            bool isIndexBlock = bs.ReadBoolBit();
+            var entryCount = (int)bs.ReadBits(11);
+
+            List<int> entryOffsets = new List<int>();
+            for (int i = 0; i < entryCount - 1; i++)
+                entryOffsets.Add((int)bs.ReadBits(12));
+
+            bs.AlignToNextByte();
+
+            if (entryCount == 1)
+                entryCount++;
+
+            if (isIndexBlock)
+            {
+                var indices = new List<IndexEntry>();
+                for (int i = 0; i < entryCount - 1; i++)
+                {
+                    IndexEntry entry = new IndexEntry();
+                    entry.Read(ref bs);
+                    indices.Add(entry);
+                }
+
+                foreach (var index in indices)
+                {
+                    bs.Position = FolderOffsets[index.SubDirIndex] * 0x40;
+                    RegisterFolder(ref bs, parent, parent.FullPath);
+                }
+
+                // Add the index terminator aswell
+                bs.Position = FolderOffsets[indices[^1].SubDirIndex + 1] * 0x40;
+                RegisterFolder(ref bs, parent, parent.FullPath);
+            }
+            else
+            {
+                var currentEntries = new List<VolumeEntry>(entryCount - 1);
+                for (int i = 0; i < entryCount - 1; i++)
+                {
+                    VolumeEntry entry = new VolumeEntry();
+                    entry.Read(ref bs);
+
+                    if (!string.IsNullOrEmpty(parentPath))
+                        entry.FullPath = $"{parentPath}/{entry.Name}";
+                    else
+                        entry.FullPath = entry.Name;
+                    parent.Child.Add(entry);
+
+                    currentEntries.Add(entry);
+                }
+
+                foreach (var entry in currentEntries)
+                {
+                    if (entry.Type == VolumeEntry.EntryType.Directory)
+                    {
+                        bs.Position = FolderOffsets[entry.SubDirIndex] * 0x40;
+                        RegisterFolder(ref bs, entry, entry.FullPath);
+                    }
+                    else
+                        _files.Add(entry);
+                }
+            }
+        }
+
+        private void UnpackFile(string outputDir, VolumeEntry entry)
+        {
+            long fileOffset = (long)((1 + this.ToCBlockOffset + this.FileDataOffset) * BlockSize) + entry.FileOffset;
+            _fs.Position = fileOffset;
+
+            byte[] data = new byte[entry.CompressedSize];
+            _fs.Read(data);
+            Volume.DecryptFile(data, (int)(fileOffset % 256));
+
+            if (entry.Compressed)
+                Utils.TryInflateInMemory(data, (ulong)entry.UncompressedSize, out data);
+
+            string outputFilePath = Path.Combine(outputDir, entry.FullPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(outputFilePath));
+
+            File.WriteAllBytes(outputFilePath, data);
+        }
+
+        public static void DecryptFile(Span<byte> data, int index = 0)
+        {
+            for (int i = 0; i < data.Length; i++)
+            {
+                if (index < DECRYPT_SBOX.Length)
+                {
+                    index++;
+                }
+                else
+                {
+                    index = 1;
+                }
+                data[i] = (byte)(data[i] ^ DECRYPT_SBOX[index - 1]);
+            }
+        }
         public static void Decrypt(Span<byte> buffer, Span<byte> outBuffer, int size)
         {
             for (int i = 0; i < size; i++)
