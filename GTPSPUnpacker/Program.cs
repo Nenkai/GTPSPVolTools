@@ -1,7 +1,7 @@
 ﻿using System;
 using System.IO;
 
-using PDTools.Utils;
+using GTPSPUnpacker.Packing;
 
 namespace GTPSPUnpacker
 {
@@ -28,6 +28,7 @@ namespace GTPSPUnpacker
             var volume = new Volume(args[0]);
 
             volume.Init();
+
             volume.UnpackAll(args[1]);
         }
     }

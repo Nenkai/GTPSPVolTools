@@ -363,13 +363,10 @@ namespace GTPSPUnpacker
 
             bs.AlignToNextByte();
 
-            if (entryCount == 1)
-                entryCount++;
-
             if (isIndexBlock)
             {
                 var indices = new List<IndexEntry>();
-                for (int i = 0; i < entryCount - 1; i++)
+                for (int i = 0; i < entryCount; i++)
                 {
                     IndexEntry entry = new IndexEntry();
                     entry.Read(ref bs);
@@ -383,13 +380,16 @@ namespace GTPSPUnpacker
                 }
 
                 // Add the index terminator aswell
-                bs.Position = FolderOffsets[indices[^1].SubDirIndex + 1] * 0x40;
-                RegisterFolder(ref bs, parent, parent.FullPath);
+                if (indices[^1].SubDirIndex + 1 < indices.Count)
+                {
+                    bs.Position = FolderOffsets[indices[^1].SubDirIndex + 1] * 0x40;
+                    RegisterFolder(ref bs, parent, parent.FullPath);
+                }
             }
             else
             {
                 var currentEntries = new List<VolumeEntry>(entryCount - 1);
-                for (int i = 0; i < entryCount - 1; i++)
+                for (int i = 0; i < entryCount; i++)
                 {
                     VolumeEntry entry = new VolumeEntry();
                     entry.Read(ref bs);
