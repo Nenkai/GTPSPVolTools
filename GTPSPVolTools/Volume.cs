@@ -9,7 +9,7 @@ using Syroot.BinaryData.Memory;
 
 using PDTools.Utils;
 
-namespace GTPSPUnpacker
+namespace GTPSPVolTools
 {
     public class Volume
     {
@@ -319,7 +319,7 @@ namespace GTPSPUnpacker
 
             using (var sw = new StreamWriter(Path.Combine(outputDir, "files.txt")))
             {
-                sw.WriteLine("Generated with GTPSPUnpacker by Nenkai#9075");
+                sw.WriteLine("Generated with GTPSPVolTools by Nenkai#9075");
                 sw.WriteLine($"Files: {_files.Count}");
                 sw.WriteLine();
 

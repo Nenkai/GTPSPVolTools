@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "GTPSPUnpacker": {
-      "commandName": "Project",
-      "commandLineArgs": "\"C:\\Gran_Turismo\\Gran_Turismo_PSP\\PSP_GAME\\USRDIR\\GT.VOL_copy\""
-    }
-  }
-}

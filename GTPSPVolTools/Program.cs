@@ -4,19 +4,19 @@ using System.Linq;
 using System.Collections;
 using System.Collections.Generic;
 
-using GTPSPUnpacker.Packing;
+using GTPSPVolTools.Packing;
 using PDTools.Utils;
 
 using CommandLine;
 using CommandLine.Text;
 
-namespace GTPSPUnpacker
+namespace GTPSPVolTools
 {
     class Program
     {
         static void Main(string[] args)
         {
-            Console.WriteLine("GTPSPUnpacker by Nenkai#9075");
+            Console.WriteLine("GTPSPVolTools by Nenkai#9075");
             Console.WriteLine();
 
             Parser.Default.ParseArguments<PackVerbs, UnpackVerbs>(args)

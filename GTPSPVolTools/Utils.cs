@@ -10,7 +10,7 @@ using Syroot.BinaryData;
 using Syroot.BinaryData.Core;
 using Syroot.BinaryData.Memory;
 
-namespace GTPSPUnpacker
+namespace GTPSPVolTools
 {
     public static class Utils
     {

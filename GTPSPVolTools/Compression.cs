@@ -16,7 +16,7 @@ using ICSharpCode.SharpZipLib.Zip.Compression.Streams;
 
 using System.Security.Cryptography;
 
-namespace GTPSPUnpacker
+namespace GTPSPVolTools
 {
     public class Compression
     {

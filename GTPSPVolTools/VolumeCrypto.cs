@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 using System.Runtime.InteropServices;
 
-namespace GTPSPUnpacker
+namespace GTPSPVolTools
 {
     public class VolumeCrypto
     {

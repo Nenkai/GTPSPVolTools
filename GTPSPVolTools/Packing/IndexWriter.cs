@@ -7,7 +7,7 @@ using System.Diagnostics;
 
 using PDTools.Utils;
 
-namespace GTPSPUnpacker.Packing
+namespace GTPSPVolTools.Packing
 {
     public class IndexWriter
     {

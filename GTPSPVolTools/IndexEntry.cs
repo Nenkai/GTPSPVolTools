@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 using PDTools.Utils;
 
-namespace GTPSPUnpacker
+namespace GTPSPVolTools
 {
     class IndexEntry
     {
