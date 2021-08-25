@@ -14,43 +14,22 @@ namespace GTPSPUnpacker
 {
     public static class Utils
     {
-        /// <summary>
-        /// Decompresses a file (in memory, unsuited for large files).
-        /// </summary>
-        /// <param name="data"></param>
-        /// <param name="outSize"></param>
-        /// <param name="deflatedData"></param>
-        /// <returns></returns>
-        public unsafe static bool TryInflateInMemory(Span<byte> data, ulong outSize, out byte[] deflatedData)
+        // https://stackoverflow.com/a/4975942
+        private static string[] sizesuf = { "B", "KB", "MB", "GB", "TB", "PB", "EB" }; //Longs run out around EB
+        public static string BytesToString(long byteCount)
         {
-            deflatedData = Array.Empty<byte>();
-            if (outSize > uint.MaxValue)
-                return false;
-
-            // Inflated is always little
-            var sr = new SpanReader(data, Endian.Little);
-            uint zlibMagic = sr.ReadUInt32();
-            uint sizeComplement = sr.ReadUInt32();
-
-            if ((long)zlibMagic != 0xFFF7EEC5)
-                return false;
-
-            if ((uint)outSize + sizeComplement != 0)
-                return false;
-
-            const int headerSize = 8;
-            if (sr.Length <= headerSize) // Header size, if it's under, data is missing
-                return false;
-
-            deflatedData = new byte[(int)outSize];
-            fixed (byte* pBuffer = &sr.Span.Slice(headerSize)[0]) // Vol Header Size
-            {
-                using var ums = new UnmanagedMemoryStream(pBuffer, sr.Span.Length - headerSize);
-                using var ds = new DeflateStream(ums, CompressionMode.Decompress);
-                ds.Read(deflatedData, 0, (int)outSize);
-            }
-
-            return true;
+            if (byteCount == 0)
+                return "0" + sizesuf[0];
+            long bytes = Math.Abs(byteCount);
+            int place = Convert.ToInt32(Math.Floor(Math.Log(bytes, 1024)));
+            double num = Math.Round(bytes / Math.Pow(1024, place), 1);
+            return (Math.Sign(byteCount) * num).ToString() + sizesuf[place];
         }
+
+        public static int MeasureBytesTakenByBits(double bitCount)
+            => (int)Math.Round(bitCount / 8, MidpointRounding.AwayFromZero);
+
+        public static ulong GetMaxValueForBitCount(int nBits)
+            => (ulong)((1L << nBits) - 1);
     }
 }

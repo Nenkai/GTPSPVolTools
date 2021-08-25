@@ -39,7 +39,7 @@ namespace GTPSPUnpacker
             _fileName = fileName;
         }
 
-        public bool Init()
+        public bool Init(bool saveVolumeHeaderToc = false)
         {
             _fs = File.Open(_fileName, FileMode.Open);
 
@@ -47,13 +47,13 @@ namespace GTPSPUnpacker
             _fs.Read(buf);
 
             // 30ed6c
-            Volume.Decrypt(buf[0x04..], buf[0x04..], sizeof(uint));
-            Volume.Decrypt(buf[0x08..], buf[0x08..], sizeof(long));
-            Volume.Decrypt(buf[0x10..], buf[0x10..], sizeof(uint)); // Block Size
-            Volume.Decrypt(buf[0x14..], buf[0x14..], sizeof(uint));
-            Volume.Decrypt(buf[0x18..], buf[0x18..], sizeof(uint));
-            Volume.Decrypt(buf[0x1c..], buf[0x1c..], sizeof(uint));
-            Volume.Decrypt(buf[0x20..], buf[0x20..], sizeof(uint));
+            VolumeCrypto.DecryptHeaderPart(buf[0x04..], buf[0x04..], sizeof(uint));
+            VolumeCrypto.DecryptHeaderPart(buf[0x08..], buf[0x08..], sizeof(long));
+            VolumeCrypto.DecryptHeaderPart(buf[0x10..], buf[0x10..], sizeof(uint)); // Block Size
+            VolumeCrypto.DecryptHeaderPart(buf[0x14..], buf[0x14..], sizeof(uint));
+            VolumeCrypto.DecryptHeaderPart(buf[0x18..], buf[0x18..], sizeof(uint));
+            VolumeCrypto.DecryptHeaderPart(buf[0x1c..], buf[0x1c..], sizeof(uint));
+            VolumeCrypto.DecryptHeaderPart(buf[0x20..], buf[0x20..], sizeof(uint));
 
             SpanReader sr = new SpanReader(buf);
             int Magic = sr.ReadInt32();
@@ -77,25 +77,20 @@ namespace GTPSPUnpacker
 
             //Console.WriteLine($"Volume: Created - {Date}");
             Console.WriteLine($"Volume: {FolderCount} Total Folders");
-#if DEBUG
-            File.WriteAllBytes("main_header.bin", buf.ToArray());
 
-            Span<byte> tocBuf = new byte[ToCLength];
-            _fs.Read(tocBuf);
-            Volume.Decrypt(tocBuf, tocBuf, ToCLength);
-            File.WriteAllBytes("toc.bin", tocBuf.ToArray());
-
-            _fs.Position = 0;
-            Span<byte> wholeThing = new byte[ToCActualOffset + ToCLength];
-            _fs.Read(wholeThing);
-            Volume.Decrypt(wholeThing, wholeThing, (int)(ToCActualOffset + ToCLength));
-            File.WriteAllBytes("whole_thing.bin", wholeThing.ToArray());
-#endif
+            if (saveVolumeHeaderToc)
+            {
+                _fs.Position = 0;
+                Span<byte> wholeThing = new byte[ToCActualOffset + ToCLength];
+                _fs.Read(wholeThing);
+                VolumeCrypto.DecryptHeaderPart(wholeThing, wholeThing, (int)(ToCActualOffset + ToCLength));
+                File.WriteAllBytes("volume_toc_header.bin", wholeThing.ToArray());
+            }
 
             _fs.Position = ToCActualOffset;
             Span<byte> folderCountBuf = new byte[(FolderCount * sizeof(ushort)) + 2];
             _fs.Read(folderCountBuf);
-            Volume.Decrypt(folderCountBuf, folderCountBuf, folderCountBuf.Length);
+            VolumeCrypto.DecryptHeaderPart(folderCountBuf, folderCountBuf, folderCountBuf.Length);
 
             SpanReader folderBufReader = new SpanReader(folderCountBuf);
             FolderOffsets = new List<ushort>(FolderCount + 1);
@@ -111,7 +106,7 @@ namespace GTPSPUnpacker
         /// <param name="path"></param>
         /// <returns></returns>
         // 30f568
-        private object Find(string path)
+        private VolumeEntry Find(string path)
         {
             Span<byte> parentEntry = GetFolderPtr(0, 0); // Root
 
@@ -127,31 +122,32 @@ namespace GTPSPUnpacker
                 if (entry.IsEmpty)
                     return null;
 
-                byte indexBlockBits = DECRYPT_SBOX[parentEntry[0]];
+                byte indexBlockBits = VolumeCrypto.SBOX_DECRYPT[parentEntry[0]];
                 if ((indexBlockBits & 1) == 0) // Is an entry block?
                 {
                     entryData = SeekEntryPtrToEntryInfo(entry);
 
-                    byte entryBits = DECRYPT_SBOX[entry[0]];
+                    byte entryBits = VolumeCrypto.SBOX_DECRYPT[entry[0]];
                     if ((entryBits & 1) == 0) // File Flag, we are done.
                         break;
                     else // Is a folder
                     {
                         // Combine sub index major and minor (6 bits, + 8 bits)
-                        int nextEntryIndex = (DECRYPT_SBOX[entry[0]] >> 2) << 8 | DECRYPT_SBOX[entryData[0]];
+                        int nextEntryIndex = (VolumeCrypto.SBOX_DECRYPT[entry[0]] >> 2) << 8 | VolumeCrypto.SBOX_DECRYPT[entryData[0]];
                         parentEntry = GetFolderPtr(nextEntryIndex, 0);
                     }
                 }
                 else // Indexing block navigation
                 {
                     entry = SeekEntryPtrToEntryInfo(entry);
-                    int indexEntryIndex = DECRYPT_SBOX[entry[0]] | DECRYPT_SBOX[entry[1]] << 8;
+                    int indexEntryIndex = VolumeCrypto.SBOX_DECRYPT[entry[0]] | VolumeCrypto.SBOX_DECRYPT[entry[1]] << 8;
 
                     parentEntry = GetFolderPtr(indexEntryIndex, 0);
                 }
             }
 
-            byte bits = DECRYPT_SBOX[entry[0]];
+            /* TODO
+            byte bits = VolumeCrypto.SBOX_DECRYPT[entry[0]];
             if ((bits & 1) == 0) // File
             {
                 int fileOffset = GetVarInt(entryData, out entryData) * 0x40;
@@ -159,7 +155,7 @@ namespace GTPSPUnpacker
             }
 
             int unCompressedSize = GetVarInt(entryData, out entryData);
-            ;
+            ;*/
             return null;
         }
 
@@ -180,7 +176,7 @@ namespace GTPSPUnpacker
         // 30EAB8
         public Span<byte> SearchEntryInFolder(Span<byte> folderPtr, ReadOnlySpan<char> targetStr, int targetStrLen)
         {
-            short dirBits = (short)(DECRYPT_SBOX[folderPtr[0]] | DECRYPT_SBOX[folderPtr[1]] << 8);
+            short dirBits = (short)(VolumeCrypto.SBOX_DECRYPT[folderPtr[0]] | VolumeCrypto.SBOX_DECRYPT[folderPtr[1]] << 8);
             int entryCount = (dirBits >> 1) & 0x7FF; // 11 bits
 
             if (entryCount == 0)
@@ -206,7 +202,7 @@ namespace GTPSPUnpacker
                 byte[] tmpStr = new byte[strLen];
                 strEntry.Slice(0, strLen).CopyTo(tmpStr);
 
-                Volume.Decrypt(tmpStr, tmpStr, strLen);
+                VolumeCrypto.DecryptHeaderPart(tmpStr, tmpStr, strLen);
                 string inputString = Encoding.ASCII.GetString(tmpStr);
                 Console.WriteLine($"Comparing {inputString} ({mid}) <-> {targetStr.ToString()}");
 #endif
@@ -218,7 +214,7 @@ namespace GTPSPUnpacker
                     int i;
                     for (i = 0; i < minLen; i++)
                     {
-                        byte currentChar = DECRYPT_SBOX[strEntry[0]];
+                        byte currentChar = VolumeCrypto.SBOX_DECRYPT[strEntry[0]];
                         byte inputChar = (byte)targetStr[i];
                         diff = inputChar - currentChar;
 
@@ -261,14 +257,13 @@ namespace GTPSPUnpacker
             if (entryIndex <= 0)
             {
                 // Return first
-
-                int s = (int)(DECRYPT_SBOX[folderPtr[0]] | DECRYPT_SBOX[folderPtr[1]] << 8);
+                int s = (int)(VolumeCrypto.SBOX_DECRYPT[folderPtr[0]] | VolumeCrypto.SBOX_DECRYPT[folderPtr[1]] << 8);
                 return folderPtr.Slice((12 * ((s >> 1) & 0x7FF) + 7) >> 3);
             }
             else
             {
                 // Get short
-                ushort comb = (ushort)(DECRYPT_SBOX[folderPtr[(entryIndex * 0x0C >> 3) + 1]] << 8 | DECRYPT_SBOX[folderPtr[(entryIndex * 0x0C >> 3)]]);
+                ushort comb = (ushort)(VolumeCrypto.SBOX_DECRYPT[folderPtr[(entryIndex * 0x0C >> 3) + 1]] << 8 | VolumeCrypto.SBOX_DECRYPT[folderPtr[(entryIndex * 0x0C >> 3)]]);
 
                 // 12 bits
                 int entryOffset = comb >> ((entryIndex & 0x1) << 0x2) & 0b_1111_11111111;
@@ -285,8 +280,8 @@ namespace GTPSPUnpacker
             const int _7bits = 0b_111_1111;
             while (true)
             {
-                lTemp += DECRYPT_SBOX[inPtr[lSize]] & _7bits;
-                if (DECRYPT_SBOX[inPtr[lSize++]] > _7bits)
+                lTemp += VolumeCrypto.SBOX_DECRYPT[inPtr[lSize]] & _7bits;
+                if (VolumeCrypto.SBOX_DECRYPT[inPtr[lSize++]] > _7bits)
                     lTemp <<= 7;
                 else
                     break;
@@ -310,7 +305,7 @@ namespace GTPSPUnpacker
 
             Span<byte> toc = new byte[ToCLength];
             _fs.Read(toc);
-            Volume.Decrypt(toc, toc, toc.Length);
+            VolumeCrypto.DecryptHeaderPart(toc, toc, toc.Length);
 
             BitStream bs = new BitStream(BitStreamMode.Read, toc, BitStreamSignificantBitOrder.MSB);
 
@@ -320,8 +315,9 @@ namespace GTPSPUnpacker
             RegisterFolder(ref bs, root, "");
 
             Directory.CreateDirectory(outputDir);
+            _files = _files.OrderBy(e => e.FileOffset).ToList();
 
-            using (var sw = new StreamWriter(Path.Combine(outputDir, "files.txt"))) 
+            using (var sw = new StreamWriter(Path.Combine(outputDir, "files.txt")))
             {
                 sw.WriteLine("Generated with GTPSPUnpacker by Nenkai#9075");
                 sw.WriteLine($"Files: {_files.Count}");
@@ -353,7 +349,7 @@ namespace GTPSPUnpacker
         private void RegisterFolder(ref BitStream bs, VolumeEntry parent, string parentPath)
         {
             int basePos = bs.Position;
-            
+
             bool isIndexBlock = bs.ReadBoolBit();
             var entryCount = (int)bs.ReadBits(11);
 
@@ -411,92 +407,35 @@ namespace GTPSPUnpacker
                         RegisterFolder(ref bs, entry, entry.FullPath);
                     }
                     else
+                    {
                         _files.Add(entry);
+                    }
                 }
             }
         }
 
         private void UnpackFile(string outputDir, VolumeEntry entry)
         {
-            long fileOffset = (long)((1 + this.ToCBlockOffset + this.FileDataOffset) * BlockSize) + entry.FileOffset;
+            uint fileOffset = (uint)((1 + this.ToCBlockOffset + this.FileDataOffset) * BlockSize) + entry.FileOffset;
             _fs.Position = fileOffset;
 
             byte[] data = new byte[entry.CompressedSize];
             _fs.Read(data);
-            Volume.DecryptFile(data, (int)(fileOffset % 256));
+            VolumeCrypto.DecryptFile(fileOffset, data, data.Length);
 
             if (entry.Compressed)
-                Utils.TryInflateInMemory(data, (ulong)entry.UncompressedSize, out data);
+            {
+                if (!Compression.TryInflateInMemory(data, entry.UncompressedSize, out data))
+                {
+                    Console.WriteLine($"ERROR: Could not uncompress {entry.FullPath}");
+                    return;
+                }
+            }
 
             string outputFilePath = Path.Combine(outputDir, entry.FullPath);
             Directory.CreateDirectory(Path.GetDirectoryName(outputFilePath));
 
             File.WriteAllBytes(outputFilePath, data);
         }
-
-        public static void DecryptFile(Span<byte> data, int index = 0)
-        {
-            for (int i = 0; i < data.Length; i++)
-            {
-                if (index < DECRYPT_SBOX.Length)
-                {
-                    index++;
-                }
-                else
-                {
-                    index = 1;
-                }
-                data[i] = (byte)(data[i] ^ DECRYPT_SBOX[index - 1]);
-            }
-        }
-        public static void Decrypt(Span<byte> buffer, Span<byte> outBuffer, int size)
-        {
-            for (int i = 0; i < size; i++)
-                outBuffer[i] = DECRYPT_SBOX[buffer[i]];
-        }
-
-        private ReadOnlySpan<char> TruncateToNextDirChar(ReadOnlySpan<char> path)
-        {
-            for (int i = 0; i < path.Length; i++)
-            {
-                if (path[i] == '/')
-                    return path.Slice(i);
-            }
-
-            return path.Slice(path.Length - 1);
-        }
-
-        private ReadOnlySpan<char> TruncateToNextActualDir(ReadOnlySpan<char> path)
-        {
-            for (int i = 0; i < path.Length; i++)
-            {
-                if (path[i] == '/')
-                    return path.Slice(i + 1);
-            }
-
-            return path.Slice(path.Length - 1);
-        }
-
-        private static byte[] DECRYPT_SBOX = new byte[]
-        {
-             0x0,  0x6, 0x86, 0x57, 0x97, 0x69, 0x6C, 0xB5, 0xBD, 0xD6, 0xBE, 0x34, 0xC2, 0x35, 0xCE, 0xFA,
-             0xE, 0x7E, 0x2F, 0xD0, 0x9A, 0x8E, 0xB4, 0x82, 0x25, 0x58, 0x1F, 0x6D, 0x90, 0xF5, 0x8B, 0xA5,
-            0xE5, 0x96, 0x56, 0xFF, 0x3B, 0x2B, 0x6B, 0xAE, 0x98, 0x32, 0x2D, 0x60, 0x45, 0xFE, 0x81, 0xA7,
-            0xEC, 0x1B, 0xDA, 0xC9, 0xDC, 0x3C, 0x52, 0xF9, 0x7B,  0x4, 0x63, 0xC6, 0xDB, 0xCA, 0x1C, 0x3D,
-            0xD1, 0x7A, 0xFD, 0x6F, 0xF1, 0xCD, 0x9C, 0x4D, 0x78, 0x74,  0xD, 0x40, 0x51, 0x8D, 0x64, 0x5C,
-            0xCB, 0x49, 0xF8, 0x39, 0x24, 0x30, 0x3A, 0xE2, 0x22, 0x61, 0xA4, 0x89,  0x9, 0x65, 0xAD, 0x1D,
-            0xEF, 0x4E, 0xC8, 0xB8, 0x10, 0xA2, 0xDF,  0xF, 0xFB, 0x66, 0x54, 0xA6, 0x1E, 0x11, 0x73, 0x62,
-            0x13, 0x21, 0x46, 0xB9, 0x33, 0x9D, 0x88, 0xB2, 0xE3, 0x37,  0xC, 0x4F, 0x84, 0x3E, 0xF0, 0x16,
-            0x70, 0x36, 0xDE, 0x8A, 0x1A, 0xEE, 0x28, 0xBC, 0x9F,  0x5, 0x80, 0x67, 0x4A, 0x7C, 0xE0, 0x53,
-            0x2E, 0xE7, 0xA3, 0x6A, 0xFC,  0x3, 0x41, 0x6E, 0xD8, 0x14, 0x38, 0xBB, 0xF6, 0xEB, 0x19, 0xAC,
-            0x48, 0xD4, 0x27, 0x44, 0xC4,  0x8, 0x95,  0x7, 0x43, 0xD5, 0x18, 0x26, 0xF4, 0x20, 0x75, 0x77,
-            0xC0, 0xA1, 0x99,  0xB, 0xC3, 0x85, 0xE1, 0xBA, 0x4C, 0xB3, 0x9B, 0x47, 0x23, 0xAF, 0x8C, 0x72,
-            0x68, 0xA8, 0xCC, 0xC7, 0xAB, 0x5F, 0x5D, 0x93, 0x3F, 0x5E, 0x87, 0x9E, 0xCF, 0xD7, 0xB0, 0x4B,
-            0x76, 0xD9, 0x71, 0x31, 0xB6, 0x7D, 0x50,  0xA, 0x5B, 0xE8, 0x83, 0x2A, 0xB7, 0x7F, 0xDD, 0x59,
-            0xC5, 0x79, 0x5A, 0xF7, 0xA9, 0xE9, 0xD2, 0xED, 0xE6, 0xBF, 0xF3, 0xB1, 0x29,  0x1, 0x12, 0xAA,
-            0x91, 0x92, 0xF2, 0x15, 0xE4, 0xD3, 0x17, 0x42,  0x2, 0xA0, 0x8F, 0xC1, 0x2C, 0x94, 0x55, 0xEA,
-        };
     }
-
-
 }

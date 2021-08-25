@@ -8,23 +8,28 @@ using PDTools.Utils;
 
 namespace GTPSPUnpacker
 {
-    class VolumeEntry
+    public class VolumeEntry
     {
-        public EntryType Type { get; set; }
-        public bool Compressed { get; set; }
-
-        public string Name { get; set; }
+        // For listing
         public string FullPath { get; set; }
 
+        // For building 
+        public int EntryOffset { get; set; }
+        public ushort EntriesLocationSegmentIndex;
+        public ushort DirDefinitionSegmentIndex;
+
+        // Actual entry data
+        public EntryType Type { get; set; }
+        public bool Compressed { get; set; }
+        public string Name { get; set; }
         public int SubDirIndex { get; set; }
-        
-        public long FileOffset { get; set; }
-        public int CompressedSize { get; set; }
-        public int UncompressedSize { get; set; }
+        public uint FileOffset { get; set; }
+        public uint CompressedSize { get; set; }
+        public uint UncompressedSize { get; set; }
 
         public List<VolumeEntry> Child = new List<VolumeEntry>();
 
-        public void Read(ref BitStream bs, bool isIndexEntry = false)
+        public void Read(ref BitStream bs)
         {
             Type = (EntryType)bs.ReadBits(1);
             Compressed = bs.ReadBoolBit();
@@ -34,40 +39,75 @@ namespace GTPSPUnpacker
             Name = bs.ReadVarPrefixString();
 
 
-            if (Type == EntryType.Directory || isIndexEntry) // File
+            if (Type == EntryType.Directory) 
             {
                 int subFolderIndexMinor = bs.ReadByte();
                 SubDirIndex = (subFolderIndexMajor << 8) | subFolderIndexMinor;
             }
             else
             {
-                FileOffset = (int)bs.ReadVarInt() << 6;
+                FileOffset = (uint)bs.ReadVarIntAlt() * 0x40;
 
                 if (Compressed)
                 {
-                    CompressedSize = (int)bs.ReadVarInt();
-                    UncompressedSize = (int)bs.ReadVarInt();
+                    CompressedSize = (uint)bs.ReadVarIntAlt();
+                    UncompressedSize = (uint)bs.ReadVarIntAlt();
                 }
                 else
                 {
-                    UncompressedSize = (int)bs.ReadVarInt();
+                    UncompressedSize = (uint)bs.ReadVarIntAlt();
                     CompressedSize = UncompressedSize;
                 }
             }
 
         }
 
-        public override string ToString()
+        public uint GetSerializedKeySize()
         {
-            var str = $"{FullPath} | Type: {Type}";
-            if (Type == EntryType.File)
+            uint length = 1;
+            length += (uint)BitStream.GetSizeOfVariablePrefixString(Name);
+
+            if (Type == EntryType.Directory)
+                length += 1;
+            else if (Type == EntryType.File)
             {
-                str += $" | Offset: {FileOffset} | ZSize: {CompressedSize} | Size: {UncompressedSize}";
+                length += (uint)BitStream.GetSizeOfVarIntAlt(FileOffset / 0x40);
+                if (Compressed)
+                    length += (uint)BitStream.GetSizeOfVarIntAlt(CompressedSize);
+                length += (uint)BitStream.GetSizeOfVarIntAlt(UncompressedSize);
+            }
+
+            return length;
+        }
+
+        public void Serialize(ref BitStream bs)
+        {
+            bs.WriteBoolBit(Type == EntryType.Directory);
+            bs.WriteBoolBit(Compressed);
+            bs.WriteBits(0, 6);
+
+            bs.WriteVarPrefixString(Name);
+            if (Type == EntryType.Directory)
+            {
+                bs.WriteByte(0);
             }
             else
             {
-                str += $" | {SubDirIndex} ({Child.Count} files)";
+                bs.WriteVarIntAlt(FileOffset / 0x40);
+                if (Compressed)
+                    bs.WriteVarIntAlt(CompressedSize);
+                bs.WriteVarIntAlt(UncompressedSize);
             }
+        }
+
+        public override string ToString()
+        {
+            var str = $"{FullPath} ({Name}) | Type: {Type}";
+            if (Type == EntryType.File)
+                str += $" | Offset: {FileOffset:X8} | Compressed: {Compressed} | ZSize: {CompressedSize:X8} | Size: {UncompressedSize:X8}";
+            else
+                str += $" | {SubDirIndex} ({Child.Count} files)";
+
             return str;
         }
 
