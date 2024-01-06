@@ -36,7 +36,7 @@ namespace GTPSPVolTools
 
             int subFolderIndexMajor = (int)bs.ReadBits(6);
 
-            Name = bs.ReadVarPrefixString();
+            Name = bs.ReadVarPrefixStringAlt();
 
 
             if (Type == EntryType.Directory) 

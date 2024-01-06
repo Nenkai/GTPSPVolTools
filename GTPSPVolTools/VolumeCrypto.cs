@@ -10,7 +10,7 @@ namespace GTPSPVolTools
 {
     public class VolumeCrypto
     {
-        // 48e580
+        // 8c92580
         public static byte[] SBOX_DECRYPT = new byte[]
         {
              0x0,  0x6, 0x86, 0x57, 0x97, 0x69, 0x6C, 0xB5, 0xBD, 0xD6, 0xBE, 0x34, 0xC2, 0x35, 0xCE, 0xFA,
@@ -40,7 +40,7 @@ namespace GTPSPVolTools
                 SBOX_ENCRYPT[SBOX_DECRYPT[i]] = (byte)i;
         }
 
-        // 30dc10
+        // 8b11c10
         public static void DecryptHeaderPart(Span<byte> buffer, Span<byte> outBuffer, int size)
         {
             for (int i = 0; i < size; i++)
@@ -53,8 +53,8 @@ namespace GTPSPVolTools
                 outBuffer[i] = SBOX_ENCRYPT[buffer[i]];
         }
 
-        // 30f7ac
-        public static void DecryptFile(uint fileOffset, Span<byte> data, int nSize)
+        // 8b137ac
+        public static void DecryptFile(long fileOffset, Span<byte> data, int nSize)
         {
             byte dOffset = (byte)fileOffset;
             Span<byte> currentBuffer = data;

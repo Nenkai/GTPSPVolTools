@@ -80,7 +80,7 @@ namespace GTPSPVolTools.Packing
 
                 // Write all the file & directory entries
                 Span<byte> toc = WriteToC();
-                VolumeCrypto.EncryptHeaderPart(toc, toc, toc.Length);
+                VolumeCrypto.EncryptHeaderPart(toc, toc.Slice(0x04), toc.Length - 4); // Magic is not encrypted
                 fsVol.Write(toc);
                 
                 // Merge toc and file blob.
@@ -91,6 +91,10 @@ namespace GTPSPVolTools.Packing
                 byte[] buffer = new byte[0x20000];
                 while ((count = fs.Read(buffer, 0, buffer.Length)) > 0)
                     volStream.BaseStream.Write(buffer, 0, count);
+
+                // Just incase. There's a value in the header with the number of 0x10000 data chunks
+                // Original is encrypted padding, personally I say we don't care for it
+                volStream.BaseStream.Align(0x10000, grow: true);
             }
             catch (Exception e)
             {
@@ -152,9 +156,11 @@ namespace GTPSPVolTools.Packing
 
             // Write volume header, append toc writen above to it
             BitStream headerStream = new BitStream(BitStreamMode.Write, endian: BitStreamSignificantBitOrder.MSB);
-            headerStream.WriteUInt32(0x21315815);
+            uint serial = (uint)(DateTime.UtcNow - new DateTime(2001, 1, 1)).TotalSeconds;
+            headerStream.WriteUInt32(Volume.VolumeMagic);
             headerStream.WriteUInt32(0xDEADBEEF);
-            headerStream.WriteUInt64(0);
+            headerStream.WriteUInt32(serial);
+            headerStream.WriteUInt32(0);
             headerStream.WriteUInt32(0); // Toc Block Offset - 0 means it's at 0x800 (1 * 0x800) + (offset * 0x800)
 
             const int baseTocPos = 0x800;
@@ -163,11 +169,14 @@ namespace GTPSPVolTools.Packing
             headerStream.Align(BlockSize);
             int fileDataOffset = headerStream.Position;
 
+            long totalDataSize = new FileInfo("gtfiles.temp").Length;
+            uint totalDataSize0x10000Chunks = MiscUtils.AlignValue((uint)totalDataSize, 0x10000);
+
             headerStream.Position = 0x14;
             headerStream.WriteUInt32((uint)(fileDataOffset - baseTocPos) / BlockSize);
             headerStream.WriteUInt32((uint)_segmentOffsets.Count + 1u);
             headerStream.WriteUInt32((uint)tocStream.Length);
-            headerStream.WriteInt32(0x3EBF);
+            headerStream.WriteUInt32(totalDataSize0x10000Chunks / 0x10000);
 
             return headerStream.GetBuffer();
         }
@@ -276,6 +285,8 @@ namespace GTPSPVolTools.Packing
             // Write index segment (if exists)
             if (!indexWriter.IsEmpty)
             {
+                stream.AlignToNextByte();
+
                 _segmentOffsets.Add((uint)stream.Position);
                 indexWriter.Write(ref stream);
             }

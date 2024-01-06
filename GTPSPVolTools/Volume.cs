@@ -18,14 +18,35 @@ namespace GTPSPVolTools
 
         public const int VolumeMagic = 0x71D319F3;
 
-        public long Date { get; set; }
+        public long SerialDate { get; set; }
+
+        /// <summary>
+        /// Offset of the toc in blocks, starting from header
+        /// </summary>
         public int ToCBlockOffset { get; set; }
-        public int FileDataOffset { get; set; }
+
+        /// <summary>
+        /// From start of toc end
+        /// </summary>
+        public int FileDataBlockOffset { get; set; }
+
+        /// <summary>
+        /// Number of folders in the file system
+        /// </summary>
         public int FolderCount { get; set; }
+
+        /// <summary>
+        /// In actual bytes
+        /// </summary>
         public int ToCLength { get; set; }
-        public int UnkSize { get; set; }
+
+        /// <summary>
+        /// Data size as a number of 0x10000 chunks, starting from data offset.
+        /// </summary>
+        public int TotalDataSize { get; set; }
 
         public long ToCActualOffset { get; set; }
+        public long DataActualOffset { get; set; }
 
         public List<ushort> FolderOffsets { get; set; }
 
@@ -39,6 +60,7 @@ namespace GTPSPVolTools
             _fileName = fileName;
         }
 
+        // 8b12d6c
         public bool Init(bool saveVolumeHeaderToc = false)
         {
             _fs = File.Open(_fileName, FileMode.Open);
@@ -46,7 +68,15 @@ namespace GTPSPVolTools
             Span<byte> buf = new byte[0x40];
             _fs.Read(buf);
 
-            // 30ed6c
+            SpanReader sr = new SpanReader(buf);
+            int Magic = sr.ReadInt32();
+
+            if (Magic != VolumeMagic) // or 0x515111d3? volume is handled *slightly* differently if that's the magic
+            {
+                Console.WriteLine("Volume: Magic did not match. Not a volume file.");
+                return false;
+            }
+
             VolumeCrypto.DecryptHeaderPart(buf[0x04..], buf[0x04..], sizeof(uint));
             VolumeCrypto.DecryptHeaderPart(buf[0x08..], buf[0x08..], sizeof(long));
             VolumeCrypto.DecryptHeaderPart(buf[0x10..], buf[0x10..], sizeof(uint)); // Block Size
@@ -55,28 +85,30 @@ namespace GTPSPVolTools
             VolumeCrypto.DecryptHeaderPart(buf[0x1c..], buf[0x1c..], sizeof(uint));
             VolumeCrypto.DecryptHeaderPart(buf[0x20..], buf[0x20..], sizeof(uint));
 
-            SpanReader sr = new SpanReader(buf);
-            int Magic = sr.ReadInt32();
-
-            if (Magic != VolumeMagic)
-            {
-                Console.WriteLine("Volume: Magic did not match. Not a volume file.");
-                return false;
-            }
-
-            Date = sr.ReadInt64();
-            int unk3 = sr.ReadInt32();
+            uint deadbeef = sr.ReadUInt32(); // Unused
+            SerialDate = sr.ReadUInt32();
+            int unk3 = sr.ReadInt32(); // Unused
             ToCBlockOffset = sr.ReadInt32();
-            FileDataOffset = sr.ReadInt32();
+            FileDataBlockOffset = sr.ReadInt32();
             FolderCount = sr.ReadInt32();
             ToCLength = sr.ReadInt32();
-            UnkSize = sr.ReadInt32(); // + 7 >> 3
+            TotalDataSize = sr.ReadInt32();
 
+            // Calculate offsets
             ToCActualOffset = (MainHeaderBlockSize + ToCBlockOffset) * BlockSize;
+            DataActualOffset = (MainHeaderBlockSize + ToCBlockOffset + FileDataBlockOffset) * BlockSize;
+
             _fs.Position = ToCActualOffset;
 
-            //Console.WriteLine($"Volume: Created - {Date}");
-            Console.WriteLine($"Volume: {FolderCount} Total Folders");
+            Console.WriteLine($"Volume Header:");
+            Console.WriteLine($"- Serial Date: {SerialDate} ({new DateTime(2001, 1, 1) + TimeSpan.FromSeconds(SerialDate)})");
+            Console.WriteLine($"- ToC Block Offset: {ToCBlockOffset}");
+            Console.WriteLine($"- File Data Block Offset: {FileDataBlockOffset}");
+            Console.WriteLine($"- Folder Count: {FolderCount}");
+            Console.WriteLine($"- ToC Length: 0x{ToCLength:X8}");
+            Console.WriteLine($"- Num Data Chunks: 0x{TotalDataSize:X8} (0x{TotalDataSize:X8} * 0x10000 = Total Data Size is {TotalDataSize * 0x10000:X8}/{TotalDataSize * 0x10000} bytes)");
+            Console.WriteLine($"- Actual ToC Offset: 0x{ToCActualOffset:X8}");
+            Console.WriteLine($"- Actual Data Start Offset: 0x{DataActualOffset:X8}");
 
             if (saveVolumeHeaderToc)
             {
@@ -105,7 +137,7 @@ namespace GTPSPVolTools
         /// </summary>
         /// <param name="path"></param>
         /// <returns></returns>
-        // 30f568
+        // 8b13568
         private VolumeEntry Find(string path)
         {
             Span<byte> parentEntry = GetFolderPtr(0, 0); // Root
@@ -159,7 +191,7 @@ namespace GTPSPVolTools
             return null;
         }
 
-        // 30f1c4
+        // 8b131c4
         private Span<byte> GetFolderPtr(int folderIndex, int idk)
         {
             int current = FolderOffsets[folderIndex];
@@ -173,7 +205,7 @@ namespace GTPSPVolTools
 
         }
 
-        // 30EAB8
+        // 8b12ab8
         public Span<byte> SearchEntryInFolder(Span<byte> folderPtr, ReadOnlySpan<char> targetStr, int targetStrLen)
         {
             short dirBits = (short)(VolumeCrypto.SBOX_DECRYPT[folderPtr[0]] | VolumeCrypto.SBOX_DECRYPT[folderPtr[1]] << 8);
@@ -251,7 +283,7 @@ namespace GTPSPVolTools
             return null;
         }
 
-        // 30ea1c
+        // 8b12a1c
         private Span<byte> GetNodeEntry(Span<byte> folderPtr, int entryIndex)
         {
             if (entryIndex <= 0)
@@ -271,7 +303,7 @@ namespace GTPSPVolTools
             }
         }
 
-        // 30DC4C
+        // 8b11c4c
         private int GetVarInt(Span<byte> inPtr, out Span<byte> outPtr)
         {
             int lSize = 0;
@@ -291,7 +323,7 @@ namespace GTPSPVolTools
             return lTemp;
         }
 
-        // 30df60
+        // 8b11f60
         private Span<byte> SeekEntryPtrToEntryInfo(Span<byte> inPtr)
         {
             Span<byte> tmp = inPtr[1..]; // Skip entry first byte bits
@@ -416,7 +448,7 @@ namespace GTPSPVolTools
 
         private void UnpackFile(string outputDir, VolumeEntry entry)
         {
-            uint fileOffset = (uint)((1 + this.ToCBlockOffset + this.FileDataOffset) * BlockSize) + entry.FileOffset;
+            long fileOffset = (long)(DataActualOffset + entry.FileOffset);
             _fs.Position = fileOffset;
 
             byte[] data = new byte[entry.CompressedSize];

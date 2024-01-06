@@ -23,7 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\PDTools.Utils\PDTools.Utils.csproj" />
+    <ProjectReference Include="..\PDTools\PDTools.Utils\PDTools.Utils.csproj" />
   </ItemGroup>
 
 </Project>

@@ -16,7 +16,7 @@ namespace GTPSPVolTools
         public void Read(ref BitStream bs)
         {
             byte subDirIndexMajor = bs.ReadByte();
-            Indexer = bs.ReadVarPrefixString();
+            Indexer = bs.ReadVarPrefixStringAlt();
 
             SubDirIndex = (short)((subDirIndexMajor << 8) | bs.ReadByte());
         }

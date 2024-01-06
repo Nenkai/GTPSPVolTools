@@ -1,11 +1,11 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 16
-VisualStudioVersion = 16.0.31515.178
+# Visual Studio Version 17
+VisualStudioVersion = 17.7.34221.43
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GTPSPVolTools", "GTPSPVolTools\GTPSPVolTools.csproj", "{635F7BAF-FCAE-4EB7-B2B1-ED8BC060D64C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PDTools.Utils", "PDTools.Utils\PDTools.Utils.csproj", "{2E93D12A-139B-46B8-BED3-294E714C6D6A}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PDTools.Utils", "PDTools\PDTools.Utils\PDTools.Utils.csproj", "{CB23A95C-D677-4EC3-97C3-E065E6309C9C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -17,10 +17,10 @@ Global
 		{635F7BAF-FCAE-4EB7-B2B1-ED8BC060D64C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{635F7BAF-FCAE-4EB7-B2B1-ED8BC060D64C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{635F7BAF-FCAE-4EB7-B2B1-ED8BC060D64C}.Release|Any CPU.Build.0 = Release|Any CPU
-		{2E93D12A-139B-46B8-BED3-294E714C6D6A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{2E93D12A-139B-46B8-BED3-294E714C6D6A}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{2E93D12A-139B-46B8-BED3-294E714C6D6A}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{2E93D12A-139B-46B8-BED3-294E714C6D6A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CB23A95C-D677-4EC3-97C3-E065E6309C9C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CB23A95C-D677-4EC3-97C3-E065E6309C9C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CB23A95C-D677-4EC3-97C3-E065E6309C9C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CB23A95C-D677-4EC3-97C3-E065E6309C9C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

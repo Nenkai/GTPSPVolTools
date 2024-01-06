@@ -49,7 +49,7 @@ namespace GTPSPVolTools
             }
 
             var volume = new Volume(verbs.InputPath);
-            if (!volume.Init())
+            if (!volume.Init(verbs.SaveVolumeHeaderToc))
             {
                 Console.WriteLine("ERROR: Could not read volume.");
                 return;

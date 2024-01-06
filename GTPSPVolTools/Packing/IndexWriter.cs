@@ -44,6 +44,7 @@ namespace GTPSPVolTools.Packing
                 entryWriter.WriteByte((byte)(_indices[i].EntriesLocationSegmentIndex >> 8)); // Major 8 bits
                 entryWriter.WriteVarPrefixString(_indices[i].Name);
                 entryWriter.WriteByte((byte)(_indices[i].EntriesLocationSegmentIndex & 0xFF)); // Minor 8 bits
+                entryWriter.AlignToNextByte();
             }
 
             stream.WriteBoolBit(true); // Index Block
