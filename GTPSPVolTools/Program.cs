@@ -14,7 +14,7 @@ namespace GTPSPVolTools;
 
 class Program
 {
-    public const string Version = "1.0.2";
+    public const string Version = "1.1.0";
 
     static void Main(string[] args)
     {
