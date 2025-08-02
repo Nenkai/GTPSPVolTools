@@ -43,7 +43,7 @@ public class IndexPageHolder : PageHolderBase
 
     public override void Write(ref BitStream stream)
     {
-        BitStream entryWriter = new BitStream(BitStreamMode.Write, endian: BitStreamSignificantBitOrder.MSB);
+        BitStream entryWriter = new BitStream(endian: BitStreamSignificantBitOrder.MSB);
         List<int> entryOffsets = [];
 
         for (int i = 0; i < Entries.Count; i++)
@@ -52,7 +52,7 @@ public class IndexPageHolder : PageHolderBase
                 entryOffsets.Add(entryWriter.Position);
 
             entryWriter.WriteByte((byte)(Entries[i].SubPageIndex >> 8)); // Major 8 bits
-            entryWriter.WriteVarPrefixStringAlt(Entries[i].IndexerString);
+            entryWriter.WriteVarPrefixStringAlt(Entries[i].IndexerString, encoding: Encoding.ASCII);
             entryWriter.WriteByte((byte)(Entries[i].SubPageIndex & 0xFF)); // Minor 8 bits
             entryWriter.AlignToNextByte();
         }

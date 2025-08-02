@@ -32,7 +32,7 @@ public class EntryPageHolder : PageHolderBase
 
     public override void Write(ref BitStream stream)
     {
-        BitStream entryWriter = new BitStream(BitStreamMode.Write, endian: BitStreamSignificantBitOrder.MSB);
+        BitStream entryWriter = new BitStream(endian: BitStreamSignificantBitOrder.MSB);
         List<int> entryOffsets = [];
 
         for (int i = 0; i < Entries.Count; i++)

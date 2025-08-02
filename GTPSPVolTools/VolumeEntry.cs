@@ -84,9 +84,9 @@ public class VolumeEntry
     {
         bs.WriteBoolBit(Type == EntryType.Directory);
         bs.WriteBoolBit(Compressed);
-        bs.WriteBits((ulong)(SubPageIndex >> 8), 6);
+        bs.WriteBits(Type != EntryType.File ? (ulong)(SubPageIndex >> 8) : 0, 6);
 
-        bs.WriteVarPrefixStringAlt(Name);
+        bs.WriteVarPrefixStringAlt(Name, encoding: Encoding.ASCII);
         if (Type == EntryType.Directory)
         {
             bs.WriteByte((byte)(SubPageIndex & 0xFF));

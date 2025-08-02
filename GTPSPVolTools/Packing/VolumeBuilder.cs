@@ -134,7 +134,7 @@ public class VolumeBuilder
             BuildPagesForFolder(_allDirEntries[i]);
 
         // Write page entries
-        BitStream tocStream = new BitStream(BitStreamMode.Write, endian: BitStreamSignificantBitOrder.MSB);
+        BitStream tocStream = new BitStream(endian: BitStreamSignificantBitOrder.MSB);
 
         // Write pages
         tocStream.Position = _allPages.Count * sizeof(ushort);
@@ -159,7 +159,7 @@ public class VolumeBuilder
         tocStream.WriteUInt16((ushort)(lastPageOffset / BLOCK_SIZE)); // Terminator
 
         // Write volume header, append toc writen above to it
-        BitStream headerStream = new BitStream(BitStreamMode.Write, endian: BitStreamSignificantBitOrder.MSB);
+        BitStream headerStream = new BitStream(endian: BitStreamSignificantBitOrder.MSB);
         uint serial = (uint)(DateTime.UtcNow - new DateTime(2001, 1, 1)).TotalSeconds;
         headerStream.WriteUInt32(Volume.VolumeMagic);
         headerStream.WriteUInt32(0xDEADBEEF);
@@ -202,9 +202,6 @@ public class VolumeBuilder
         {
             // Calculate if it can be writen in the current page first
             VolumeEntry entry = folder.Child[entryIndex];
-            if (entry.Name == "cappuccino_91.01")
-                ;
-
             if (!currentEntryPage.TryAddEntry(entry))
             {
                 currentEntryPage = new EntryPageHolder();
@@ -385,6 +382,9 @@ public class VolumeBuilder
             entry.Name = Path.GetFileName(path);
 
             string relativePath = path.Substring(folder.Length + 1);
+
+            if (!relativePath.All(static c => char.IsAscii(c)))
+                throw new Exception($"Invalid character in path: {relativePath}. Path must be ASCII characters.");
 
             if (relativePath == "files.txt")
                 continue; // Exclude
