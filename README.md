@@ -4,6 +4,11 @@ Unpacks and packs volume files (GT.VOL) for Gran Turismo PSP.
 
 Refer to the [Modding Hub](https://nenkai.github.io/gt-modding-hub/psp/getting_started/).
 
+## Usage
+
+* Unpacking: `GTPSPVolTools unpack -i <path to GT.VOL>`
+* Packing: `GTPSPVolTools pack -i <path to folder>`
+
 > [!NOTE]
 > Note when packing:
 > 
