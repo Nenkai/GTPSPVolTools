@@ -14,8 +14,6 @@ using Syroot.BinaryData.Memory;
 using ICSharpCode.SharpZipLib.Zip.Compression;
 using ICSharpCode.SharpZipLib.Zip.Compression.Streams;
 
-using System.Security.Cryptography;
-
 namespace GTPSPVolTools;
 
 public class Compression

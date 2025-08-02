@@ -15,7 +15,7 @@ namespace GTPSPVolTools;
 public static class Utils
 {
     // https://stackoverflow.com/a/4975942
-    private static string[] sizesuf = { "B", "KB", "MB", "GB", "TB", "PB", "EB" }; //Longs run out around EB
+    private static readonly string[] sizesuf = ["B", "KB", "MB", "GB", "TB", "PB", "EB"]; //Longs run out around EB
     public static string BytesToString(long byteCount)
     {
         if (byteCount == 0)

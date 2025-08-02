@@ -355,7 +355,7 @@ public class Volume
 
         using (var sw = new StreamWriter(Path.Combine(outputDir, "files.txt")))
         {
-            sw.WriteLine("Generated with GTPSPVolTools by Nenkai#9075");
+            sw.WriteLine("Generated with GTPSPVolTools by Nenkai");
             sw.WriteLine($"Files: {_files.Count}");
             sw.WriteLine();
 
@@ -407,14 +407,14 @@ public class Volume
 
             foreach (var index in indices)
             {
-                bs.Position = FolderOffsets[index.SubDirIndex] * 0x40;
+                bs.Position = FolderOffsets[index.SubPageIndex] * 0x40;
                 RegisterFolder(ref bs, parent, parent.FullPath);
             }
 
             // Add the index terminator aswell
-            if (indices[^1].SubDirIndex + 1 < indices.Count)
+            if (indices[^1].SubPageIndex + 1 < indices.Count)
             {
-                bs.Position = FolderOffsets[indices[^1].SubDirIndex + 1] * 0x40;
+                bs.Position = FolderOffsets[indices[^1].SubPageIndex + 1] * 0x40;
                 RegisterFolder(ref bs, parent, parent.FullPath);
             }
         }
@@ -439,7 +439,7 @@ public class Volume
             {
                 if (entry.Type == VolumeEntry.EntryType.Directory)
                 {
-                    bs.Position = FolderOffsets[entry.SubDirIndex] * 0x40;
+                    bs.Position = FolderOffsets[entry.SubPageIndex] * 0x40;
                     RegisterFolder(ref bs, entry, entry.FullPath);
                 }
                 else

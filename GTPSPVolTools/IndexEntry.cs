@@ -8,22 +8,30 @@ using PDTools.Utils;
 
 namespace GTPSPVolTools;
 
-class IndexEntry
+public class IndexEntry
 {
-    public string Indexer { get; set; }
-    public short SubDirIndex { get; set; }
+    public string IndexerString { get; set; }
+    public ushort SubPageIndex { get; set; }
 
     public void Read(ref BitStream bs)
     {
         byte subDirIndexMajor = bs.ReadByte();
-        Indexer = bs.ReadVarPrefixStringAlt();
+        IndexerString = bs.ReadVarPrefixStringAlt();
 
-        SubDirIndex = (short)((subDirIndexMajor << 8) | bs.ReadByte());
+        SubPageIndex = (ushort)((subDirIndexMajor << 8) | bs.ReadByte());
     }
 
     public override string ToString()
     {
-        return $"Indexer: {Indexer} | FolderIndex: {SubDirIndex}";
+        return $"Indexer: {IndexerString} | FolderIndex: {SubPageIndex}";
     }
 
+    public uint GetSerializedSize()
+    {
+        uint indexEntrySize = sizeof(byte) // Page Index hi
+            + (uint)BitStream.GetSizeOfVariablePrefixString(IndexerString) // Name
+            + sizeof(byte); // Page Index lo
+
+        return indexEntrySize;
+    }
 }

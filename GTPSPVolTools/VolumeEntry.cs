@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
+using GTPSPVolTools.Packing;
+
 using PDTools.Utils;
 
 namespace GTPSPVolTools;
@@ -14,15 +16,13 @@ public class VolumeEntry
     public string FullPath { get; set; }
 
     // For building 
-    public int EntryOffset { get; set; }
-    public ushort EntriesLocationSegmentIndex;
-    public ushort DirDefinitionSegmentIndex;
+    public IndexEntry ParentIndex { get; set; }
 
     // Actual entry data
-    public EntryType Type { get; set; }
+    public EntryType Type { get; set; } = EntryType.File;
     public bool Compressed { get; set; }
     public string Name { get; set; }
-    public int SubDirIndex { get; set; }
+    public ushort SubPageIndex { get; set; }
     public uint FileOffset { get; set; }
     public uint CompressedSize { get; set; }
     public uint UncompressedSize { get; set; }
@@ -42,7 +42,7 @@ public class VolumeEntry
         if (Type == EntryType.Directory) 
         {
             int subFolderIndexMinor = bs.ReadByte();
-            SubDirIndex = (subFolderIndexMajor << 8) | subFolderIndexMinor;
+            SubPageIndex = (ushort)((subFolderIndexMajor << 8) | subFolderIndexMinor);
         }
         else
         {
@@ -62,7 +62,7 @@ public class VolumeEntry
 
     }
 
-    public uint GetSerializedKeySize()
+    public uint GetSerializedSize()
     {
         uint length = 1;
         length += (uint)BitStream.GetSizeOfVariablePrefixString(Name);
@@ -84,12 +84,12 @@ public class VolumeEntry
     {
         bs.WriteBoolBit(Type == EntryType.Directory);
         bs.WriteBoolBit(Compressed);
-        bs.WriteBits(0, 6);
+        bs.WriteBits((ulong)(SubPageIndex >> 8), 6);
 
-        bs.WriteVarPrefixString(Name);
+        bs.WriteVarPrefixStringAlt(Name);
         if (Type == EntryType.Directory)
         {
-            bs.WriteByte(0);
+            bs.WriteByte((byte)(SubPageIndex & 0xFF));
         }
         else
         {
@@ -106,7 +106,7 @@ public class VolumeEntry
         if (Type == EntryType.File)
             str += $" | Offset: {FileOffset:X8} | Compressed: {Compressed} | ZSize: {CompressedSize:X8} | Size: {UncompressedSize:X8}";
         else
-            str += $" | {SubDirIndex} ({Child.Count} files)";
+            str += $" | {SubPageIndex} ({Child.Count} files)";
 
         return str;
     }

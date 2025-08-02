@@ -1,7 +1,12 @@
-﻿using System;
+﻿#if DEBUG
+//#define TEST_MULTIPLE_INDICES_PAGES
+#endif
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+
 using System.Threading.Tasks;
 using System.Buffers;
 using System.Buffers.Binary;
@@ -18,9 +23,10 @@ namespace GTPSPVolTools.Packing;
 
 public class VolumeBuilder
 {
-    public const int BlockSize = 0x800;
-    public const int BTREE_MAX_SEGMENT_SIZE = 0x1000;
-    public const int FileAlignment = 0x40;
+    public const int BTREE_MAX_PAGE_SIZE = 0x1000;
+    public const int BLOCK_SIZE = 0x40;
+    public const int DATA_SECTOR_SIZE = 0x800;
+    public const int DATA_CHUNK_SIZE_FOR_INSTALL = 0x10000;
 
     public string InputFolder { get; set; }
 
@@ -29,17 +35,12 @@ public class VolumeBuilder
     /// <summary>
     /// List of all directory as entries we are writing
     /// </summary>
-    private readonly List<VolumeEntry> _entries = [];
+    private readonly List<VolumeEntry> _allDirEntries = [];
 
     /// <summary>
-    /// Offsets to segments for the toc
+    /// All written btree pages, including index and entry pages
     /// </summary>
-    private readonly List<uint> _segmentOffsets = [];
-
-    /// <summary>
-    /// Last written segment index
-    /// </summary>
-    private ushort _lastSegmentIndex;
+    private readonly List<PageHolderBase> _allPages = [];
 
     /// <summary>
     /// Imports and registers the specified local directory and all of its files before building a volume.
@@ -54,8 +55,17 @@ public class VolumeBuilder
         RootDir = new VolumeEntry();
         Import(RootDir, InputFolder);
 
-        _entries.Add(RootDir);
+        _allDirEntries.Add(RootDir);
         TraverseBuildEntryPackList(RootDir);
+
+        // This will generate index page for other index pages since there are a lot of files
+        // Testing purposes
+#if TEST_MULTIPLE_INDICES_PAGES
+        for (int i = 0; i < 30000; i++)
+        {
+            RootDir.Child.Add(new VolumeEntry() { Name = $"z{i,-0x78:X8}", Type = VolumeEntry.EntryType.File });
+        }
+#endif
     }
 
     /// <summary>
@@ -80,6 +90,10 @@ public class VolumeBuilder
 
             // Write all the file & directory entries
             Span<byte> toc = WriteToC();
+#if DEBUG
+            File.WriteAllBytes("volume_toc_header_built.bin", toc);
+#endif
+
             VolumeCrypto.EncryptHeaderPart(toc[0x04..], toc[0x04..], toc.Length - 4); // Magic is not encrypted
             fsVol.Write(toc);
             
@@ -94,7 +108,7 @@ public class VolumeBuilder
 
             // Just incase. There's a value in the header with the number of 0x10000 data chunks
             // Original is encrypted padding, personally I say we don't care for it
-            volStream.BaseStream.Align(0x10000, grow: true);
+            volStream.BaseStream.Align(DATA_CHUNK_SIZE_FOR_INSTALL, grow: true);
         }
         catch (Exception e)
         {
@@ -115,44 +129,34 @@ public class VolumeBuilder
     /// <returns></returns>
     private Span<byte> WriteToC()
     {
-        // Write segment entries
-        BitStream tocSegmentsStream = new BitStream(BitStreamMode.Write, endian: BitStreamSignificantBitOrder.MSB);
-        for (int i = 0; i < _entries.Count; i++)
-        {
-            var dir = _entries[i];
-            dir.EntriesLocationSegmentIndex = _lastSegmentIndex;
-            WriteDirEntryToCSegment(ref tocSegmentsStream, _entries[i]);
-        }
+        // Create our btree & its pages
+        for (int i = 0; i < _allDirEntries.Count; i++)
+            BuildPagesForFolder(_allDirEntries[i]);
 
-        // Link segments by rewriting the dir entries with the actual segment index they link to
-        for (int i = 1; i < _entries.Count; i++)
-        {
-            var dir = _entries[i];
-
-            tocSegmentsStream.Position = (int)_segmentOffsets[dir.DirDefinitionSegmentIndex] + dir.EntryOffset;
-            tocSegmentsStream.WriteBoolBit(true); // Dir
-            tocSegmentsStream.WriteBoolBit(false); // Uncomp
-            tocSegmentsStream.WriteBits((ulong)(dir.EntriesLocationSegmentIndex >> 8), 6); // Major
-            tocSegmentsStream.WriteVarPrefixString(dir.Name);
-            tocSegmentsStream.WriteByte((byte)(dir.EntriesLocationSegmentIndex & 0xFF)); // Minor
-        }
-
-        // Write segment offset toc, append entry toc to it
+        // Write page entries
         BitStream tocStream = new BitStream(BitStreamMode.Write, endian: BitStreamSignificantBitOrder.MSB);
-        tocStream.Position = _segmentOffsets.Count * sizeof(ushort);
-        tocStream.Align(0x40);
-        int tocOffsetSize = tocStream.Position;
 
-        tocStream.Position = 0;
-        for (int i = 0; i < _segmentOffsets.Count; i++)
-            tocStream.WriteUInt16((ushort)((uint)(tocOffsetSize + _segmentOffsets[i]) / 0x40));
-        tocStream.Position += 2; // Make way for terminator
-        tocStream.Align(0x40);
-        tocStream.WriteByteData(tocSegmentsStream.GetBuffer());
+        // Write pages
+        tocStream.Position = _allPages.Count * sizeof(ushort);
+        tocStream.Align(BLOCK_SIZE);
 
-        ushort segmentTerminator = (ushort)(tocStream.Length / 0x40);
-        tocStream.Position = _segmentOffsets.Count * sizeof(ushort);
-        tocStream.WriteUInt16(segmentTerminator);
+        int lastPageOffset = tocStream.Position;
+        for (int i = 0; i < _allPages.Count; i++)
+        {
+            tocStream.Position = lastPageOffset;
+            int pageOffset = tocStream.Position;
+            _allPages[i].Write(ref tocStream);
+
+            lastPageOffset = tocStream.Position;
+            tocStream.Position = i * sizeof(ushort);
+
+            uint pageBlockOffset = (uint)(pageOffset / BLOCK_SIZE);
+            Debug.Assert(pageBlockOffset <= ushort.MaxValue, "Page block offset exceeds ushort max value. This volume has too many pages.");
+
+            tocStream.WriteUInt16(pageBlockOffset);
+        }
+        Debug.Assert((uint)(lastPageOffset / BLOCK_SIZE) <= ushort.MaxValue, "Last page block offset exceeds ushort max value. This volume has too many pages.");
+        tocStream.WriteUInt16((ushort)(lastPageOffset / BLOCK_SIZE)); // Terminator
 
         // Write volume header, append toc writen above to it
         BitStream headerStream = new BitStream(BitStreamMode.Write, endian: BitStreamSignificantBitOrder.MSB);
@@ -161,142 +165,138 @@ public class VolumeBuilder
         headerStream.WriteUInt32(0xDEADBEEF);
         headerStream.WriteUInt32(serial);
         headerStream.WriteUInt32(0);
-        headerStream.WriteUInt32(0); // Toc Block Offset - 0 means it's at 0x800 (1 * 0x800) + (offset * 0x800)
+        headerStream.WriteUInt32(0); // Toc Block Offset - 0 means it's at 0x800 (1 * 0x800) + (offset aka 0 * 0x800)
 
         const int baseTocPos = 0x800;
         headerStream.Position = baseTocPos;
         headerStream.WriteByteData(tocStream.GetBuffer());
-        headerStream.Align(BlockSize);
+        headerStream.Align(DATA_SECTOR_SIZE);
         int fileDataOffset = headerStream.Position;
 
         long totalDataSize = new FileInfo("gtfiles.temp").Length;
-        uint totalDataSize0x10000Chunks = MiscUtils.AlignValue((uint)totalDataSize, 0x10000);
+        uint totalDataSizeAligned = MiscUtils.AlignValue((uint)totalDataSize, DATA_CHUNK_SIZE_FOR_INSTALL);
 
         headerStream.Position = 0x14;
-        headerStream.WriteUInt32((uint)(fileDataOffset - baseTocPos) / BlockSize);
-        headerStream.WriteUInt32((uint)_segmentOffsets.Count + 1u);
-        headerStream.WriteUInt32((uint)tocStream.Length);
-        headerStream.WriteUInt32(totalDataSize0x10000Chunks / 0x10000);
+        headerStream.WriteUInt32((uint)(fileDataOffset - baseTocPos) / DATA_SECTOR_SIZE); // FileDataSectorOffset
+        headerStream.WriteUInt32((uint)_allPages.Count + 1u); // Num page offsets, +1 for terminator
+        headerStream.WriteUInt32((uint)tocStream.Length); // ToC Length
+        headerStream.WriteUInt32(totalDataSizeAligned / DATA_CHUNK_SIZE_FOR_INSTALL); // Chunked data size for install
 
         return headerStream.GetBuffer();
     }
 
     /// <summary>
-    /// Writes one or multiple segments for a directory entry.
+    /// Writes one or multiple pages for a directory entry.
     /// </summary>
     /// <param name="stream"></param>
     /// <param name="folder"></param>
-    private void WriteDirEntryToCSegment(ref BitStream stream, VolumeEntry folder)
+    private void BuildPagesForFolder(VolumeEntry folder)
     {
         int entryIndex = 0;
 
-        BitStream folderSegmentWriter = new BitStream(BitStreamMode.Write, endian: BitStreamSignificantBitOrder.MSB);
-        IndexWriter indexWriter = new IndexWriter();
-        List<uint> entrySegmentOffsets = []; // For the main vol segment offsets header
+        List<EntryPageHolder> entryPages = [];
+        EntryPageHolder currentEntryPage = new EntryPageHolder();
+        entryPages.Add(currentEntryPage);
 
         while (entryIndex < folder.Child.Count)
         {
-            int segmentKeyCount = 0;
-            int segmentStartIndex = entryIndex;
+            // Calculate if it can be writen in the current page first
+            VolumeEntry entry = folder.Child[entryIndex];
+            if (entry.Name == "cappuccino_91.01")
+                ;
 
-            int baseSegPos = folderSegmentWriter.Position;
-
-            // To keep track of where the keys are located to write them in the toc
-            List<int> segmentKeyOffsets = [];
-            BitStream entryWriter = new BitStream(BitStreamMode.Write, 1024, BitStreamSignificantBitOrder.MSB);
-
-            VolumeEntry firstEntry = folder.Child[entryIndex];
-
-            entrySegmentOffsets.Add((uint)folderSegmentWriter.Position);
-
-            while (entryIndex < folder.Child.Count)
+            if (!currentEntryPage.TryAddEntry(entry))
             {
-                // Calculate if it can be writen in the current segment first
-                VolumeEntry entry = folder.Child[entryIndex];
-                uint keySize = entry.GetSerializedKeySize();
+                currentEntryPage = new EntryPageHolder();
+                entryPages.Add(currentEntryPage);
 
-                int currentSizeTaken = Utils.MeasureBytesTakenByBits(12 + (segmentKeyCount * 12));
-                currentSizeTaken += entryWriter.Position; // And size of key data themselves
-
-                if (currentSizeTaken + (keySize + 2) >= BTREE_MAX_SEGMENT_SIZE) // Extra 2 to fit the 12 bits offset as short
-                    break; // Entry cannot be written, exit loop to create new segment
-
-                // To build up the segment's TOC when its filled or done - first one is not included
-                if (segmentKeyCount > 0)
-                    segmentKeyOffsets.Add(entryWriter.Position);
-
-                // For linking, later on
-                if (entry.Type == VolumeEntry.EntryType.Directory)
-                {
-                    entry.EntryOffset = entryWriter.Position;
-                    entry.DirDefinitionSegmentIndex = _lastSegmentIndex;
-                }
-
-                // Serialize the key
-                entry.Serialize(ref entryWriter);
-                //entry.EntriesLocationSegmentIndex = _lastSegmentIndex;
-
-                // Move on to next
-                segmentKeyCount++;
-                entryIndex++;
+                currentEntryPage.TryAddEntry(entry);
             }
 
-            // We need to write an index block as the entries did not fit within 0x1000
-            if (entryIndex < folder.Child.Count || !indexWriter.IsEmpty)
-            {
-                if (indexWriter.IsEmpty)
-                    _lastSegmentIndex++;
-
-                firstEntry.EntriesLocationSegmentIndex = _lastSegmentIndex; // + 1 due to index being behind
-                indexWriter.AddIndex(firstEntry);
-            }
-
-            // Finish up segment header
-            folderSegmentWriter.Position = baseSegPos;
-            folderSegmentWriter.WriteBoolBit(false); // Not index block
-            folderSegmentWriter.WriteBits((ulong)segmentKeyCount, 11);
-
-            int segTocSize = Utils.MeasureBytesTakenByBits(12 + (segmentKeyOffsets.Count * 12));
-            if (segmentKeyCount > 1) // If theres only one entry, we don't need a toc at all
-            {
-                for (int i = 0; i < segmentKeyOffsets.Count; i++)
-                {
-                    // Translate each key offset to segment relative offsets
-                    folderSegmentWriter.WriteBits((ulong)(segTocSize + segmentKeyOffsets[i]), 12);
-                }
-                folderSegmentWriter.AlignToNextByte();
-            }
-
-            // Ensure to translate the entry offsets with the toc size (for linking)
-            for (int i = segmentStartIndex; i < entryIndex; i++)
-            {
-                var entry = folder.Child[i];
-                if (entry.Type == VolumeEntry.EntryType.Directory)
-                    entry.EntryOffset += segTocSize;
-            }
-
-            // Write key data
-            folderSegmentWriter.WriteByteData(entryWriter.GetSpan());
-            folderSegmentWriter.Align(0x40);
-
-            _lastSegmentIndex++;
+            entryIndex++;
         }
 
-        // Write index segment (if exists)
-        if (!indexWriter.IsEmpty)
+        List<IndexPageHolder> indexPages = [];
+        List<IndexEntry> allIndices = [];
+        if (entryPages.Count > 1)
         {
-            stream.AlignToNextByte();
+            IndexPageHolder idxPage = new IndexPageHolder();
+            indexPages.Add(idxPage);
+            foreach (var page in entryPages)
+            {
+                // Add the first entry of each page to the current index page
+                var newIndexEntry = new IndexEntry() { IndexerString = page.Entries[0].Name, SubPageIndex = page.Entries[0].SubPageIndex };
+                if (!idxPage.TryAddEntry(newIndexEntry))
+                {
+                    idxPage = new IndexPageHolder();
+                    indexPages.Add(idxPage);
 
-            _segmentOffsets.Add((uint)stream.Position);
-            indexWriter.Write(ref stream);
+                    idxPage.TryAddEntry(newIndexEntry);
+                }
+
+                allIndices.Add(newIndexEntry);
+            }
         }
 
-        // Then folder segments
-        // Translate to entry offsets segment relative offsets
-        for (int i = 0; i < entrySegmentOffsets.Count; i++)
-            _segmentOffsets.Add((uint)(stream.Position + entrySegmentOffsets[i]));
+        ushort startPage = (ushort)_allPages.Count;
+        Debug.Assert(startPage <= (int)Utils.GetMaxValueForBitCount(14), $"Exceeded maximum page index ({Utils.GetMaxValueForBitCount(14)}). This volume has too many files/folders.");
 
-        stream.WriteByteData(folderSegmentWriter.GetSpan()); // Appends all the segments to the folder writer
+        // Build parent index pages of index pages (this should only happen if there are a LOT of files in a folder that a single index page cannot hold them all)
+        // pretty proud of this part lol
+        List<IndexPageHolder> currentIndexPages = indexPages;
+        ushort currentPageCounter = startPage;
+        while (currentIndexPages.Count > 1)
+        {
+            var parentIndexPages = new List<IndexPageHolder>();
+            var currentParentIndexPage = new IndexPageHolder();
+            parentIndexPages.Add(currentParentIndexPage);
+
+            // Easier part, register new index from child index pages
+            for (int i = 0; i < currentIndexPages.Count; i++)
+            {
+                var newIndexEntry = new IndexEntry() { IndexerString = currentIndexPages[i].Entries[0].IndexerString, SubPageIndex = currentPageCounter };
+                if (!currentParentIndexPage.TryAddEntry(newIndexEntry))
+                {
+                    currentParentIndexPage = new IndexPageHolder();
+                    parentIndexPages.Add(currentParentIndexPage);
+
+                    currentParentIndexPage.TryAddEntry(newIndexEntry);
+                }
+                currentPageCounter++;
+            }
+            currentPageCounter = 0;
+
+            Console.WriteLine($"Adding {parentIndexPages.Count} parents");
+
+            // Insert Index pages indexing other index pages at the front
+            indexPages.InsertRange(0, parentIndexPages);
+
+            // Retroactively update page indices of child pages
+            for (int i = 0; i < indexPages.Count; i++)
+            {
+                foreach (var entry in indexPages[i].Entries)
+                {
+                    // Note: this will set an incorrect index for index pages that actually link to their directory page.
+                    // That'll be fixed in another pass
+                    Debug.Assert(entry.SubPageIndex + parentIndexPages.Count < (int)Utils.GetMaxValueForBitCount(14));
+
+                    entry.SubPageIndex += (ushort)parentIndexPages.Count;
+                }
+            }
+
+            currentIndexPages = parentIndexPages;
+        }
+
+        // Link index entries that point to their actual entry to their entry page
+        if (indexPages.Count > 0)
+        {
+            for (int i = 0; i < allIndices.Count; i++)
+                allIndices[i].SubPageIndex = (ushort)(startPage + (indexPages.Count + i));
+        }
+
+        folder.SubPageIndex = startPage;
+        _allPages.AddRange(indexPages);
+        _allPages.AddRange(entryPages);
     }
 
     /// <summary>
@@ -308,7 +308,7 @@ public class VolumeBuilder
         using var bs = new BinaryStream(fs);
 
         int i = 1;
-        int count = _entries.Count(c => c.Type != VolumeEntry.EntryType.Directory);
+        int count = _allDirEntries.Count(c => c.Type != VolumeEntry.EntryType.Directory);
 
         WriteDirectoryFileContents(bs, RootDir, "", ref i, ref count);
     }
@@ -335,6 +335,10 @@ public class VolumeBuilder
                 string filePath = string.IsNullOrEmpty(path) ? entry.Name : $"{path}/{entry.Name}";
                 entry.FileOffset = (uint)fileWriter.Position;
 
+#if TEST_MULTIPLE_INDICES_PAGES
+                if (!File.Exists(Path.Combine(InputFolder, filePath)))
+                    continue;
+#endif
                 using var file = File.Open(Path.Combine(InputFolder, filePath), FileMode.Open);
                 long fileSize = file.Length;
                 if (fileSize > int.MaxValue) // int to be safe rather than uint
@@ -357,7 +361,7 @@ public class VolumeBuilder
                     Compression.Encrypt(file, fileWriter);
                 }
 
-                fileWriter.Align(FileAlignment, grow: true);
+                fileWriter.Align(BLOCK_SIZE, grow: true);
                 currentIndex++;
             }
 
@@ -415,7 +419,7 @@ public class VolumeBuilder
         {
             if (entry.Type == VolumeEntry.EntryType.Directory)
             {
-                _entries.Add(entry);
+                _allDirEntries.Add(entry);
                 TraverseBuildEntryPackList(entry);
             }
         }
@@ -430,10 +434,11 @@ public class VolumeBuilder
     {
         string volPath = path.Replace('\\', '/');
 
-        if (volPath.StartsWith("sound_gt") || volPath.StartsWith("carsound")) // No sound files - bit compressed
+        if (volPath.StartsWith("sound_gt") || volPath.StartsWith("carsound") ||
+            volPath.EndsWith(".at3") || volPath.EndsWith(".sgd") || volPath.EndsWith("esgx")) // No sound files - bit compressed
             return false;
 
-        if (volPath.StartsWith("movie")) // Same
+        if (volPath.StartsWith("movie") || volPath.EndsWith(".pmf")) // Same
             return false;
 
         if (volPath.StartsWith("replay")) // Already compressed
