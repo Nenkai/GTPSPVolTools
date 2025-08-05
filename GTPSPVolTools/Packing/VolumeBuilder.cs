@@ -263,8 +263,6 @@ public class VolumeBuilder
             }
             currentPageCounter = 0;
 
-            Console.WriteLine($"Adding {parentIndexPages.Count} parents");
-
             // Insert Index pages indexing other index pages at the front
             indexPages.InsertRange(0, parentIndexPages);
 
